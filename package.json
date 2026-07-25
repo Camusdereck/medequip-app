@@ -1,0 +1,27 @@
+{
+  "name": "inventaire-pharmacie",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@tailwindcss/cli": "^4.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Camusdereck/phamarciemedecineligne-erp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Camusdereck/phamarciemedecineligne-erp/issues"
+  },
+  "homepage": "https://github.com/Camusdereck/phamarciemedecineligne-erp#readme",
+  "devDependencies": {
+    "tailwindcss": "^4.3.0"
+  }
+}

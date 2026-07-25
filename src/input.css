@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Configuration du Thème (Couleurs de l'Agence Satmak & Polices) */
+@theme {
+  --font-sans: 'DM Sans', sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+  
+  --color-medical-50: #eff6ff;
+  --color-medical-100: #dbeafe;
+  --color-medical-200: #bfdbfe;
+  --color-medical-500: #3b82f6;
+  --color-medical-600: #2563EB;
+  --color-medical-700: #1d4ed8;
+  --color-medical-900: #1e3a8a;
+}
+
+/* Base (Scrollbar & Suppression des flèches sur les inputs de nombre) */
+@layer base {
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* Composants (Menu & Modales) */
+@layer components {
+  .nav-item.active { background-color: #1e293b; color: #ffffff; border-left: 4px solid #3b82f6; }
+  
+  .modal-overlay { opacity: 0; pointer-events: none; transition: opacity 0.2s ease-out; }
+  .modal-overlay.open { opacity: 1; pointer-events: auto; }
+  .modal-box { transform: translateY(20px); transition: transform 0.2s ease-out; }
+  .modal-overlay.open .modal-box { transform: translateY(0); }
+}
+
+/* Impression du Ticket de Caisse Moderne */
+@media print {
+  body > *:not(#print-receipt-area) { 
+    display: none !important; 
+  }
+  #print-receipt-area { 
+    display: block !important; 
+    visibility: visible !important;
+    position: relative !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  @page { margin: 0; }
+}
