@@ -82,6 +82,34 @@ function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+// ==================== 4bis. RÔLES ====================
+const MAT_ROLE_PAGES = {
+    admin: ['dashboard', 'catalogue', 'parc', 'ventes', 'locations', 'sav', 'crm', 'comptes'],
+    commercial: ['dashboard', 'catalogue', 'parc', 'ventes', 'locations', 'crm'],
+    technicien: ['parc', 'sav']
+};
+const MAT_ROLE_DEFAULT_PAGE = { admin: 'dashboard', commercial: 'dashboard', technicien: 'parc' };
+const MAT_ROLE_LABELS = { admin: 'Admin', commercial: 'Commercial', technicien: 'Technicien' };
+
+function getMatAllowedPages() {
+    const role = state.userProfile?.role;
+    return MAT_ROLE_PAGES[role] || [];
+}
+
+function applyMatRoleRestrictions() {
+    const allowed = getMatAllowedPages();
+    document.querySelectorAll('.nav-item').forEach(a => {
+        const page = a.id.replace('nav-', '');
+        a.style.display = allowed.includes(page) ? '' : 'none';
+    });
+
+    // Création/modification de modèles : réservée à l'admin
+    const isAdmin = state.userProfile?.role === 'admin';
+    const btnNewModel = document.getElementById('btn-new-model');
+    if (btnNewModel) btnNewModel.style.display = isAdmin ? '' : 'none';
+    document.querySelectorAll('.btn-edit-model').forEach(btn => btn.style.display = isAdmin ? '' : 'none');
+}
+
 const fmtMoney = n => new Intl.NumberFormat('fr-FR').format(n || 0) + ' FCFA';
 const fmtDate = d => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 const genId = prefix => prefix + Date.now().toString(36).toUpperCase() + Math.floor(100 + Math.random() * 900);
@@ -140,12 +168,23 @@ async function loadDatabase() {
         state.rentals = rentalsReq.data || [];
         state.maintenanceTickets = ticketsReq.data || [];
 
+        applyMatRoleRestrictions();
+
+        // Redirige vers la page par défaut du rôle si la page actuelle n'est pas autorisée
+        const currentPageEl = document.querySelector('.page.block');
+        const currentPage = currentPageEl ? currentPageEl.id.replace('page-', '') : 'dashboard';
+        if (state.userProfile && !getMatAllowedPages().includes(currentPage)) {
+            navigate(MAT_ROLE_DEFAULT_PAGE[state.userProfile.role] || 'dashboard');
+        }
+
         renderDashboard();
         if (!document.getElementById('page-catalogue').classList.contains('hidden')) renderCatalogue();
         if (!document.getElementById('page-parc').classList.contains('hidden')) renderParc();
         if (!document.getElementById('page-ventes').classList.contains('hidden')) renderVentes();
         if (!document.getElementById('page-locations').classList.contains('hidden')) renderLocations();
         if (!document.getElementById('page-sav').classList.contains('hidden')) renderSav();
+        if (!document.getElementById('page-crm').classList.contains('hidden')) renderCRM();
+        if (document.getElementById('page-comptes') && !document.getElementById('page-comptes').classList.contains('hidden')) renderComptes();
 
     } catch (err) {
         showToast("Erreur de synchronisation: " + (err.message || ''), "error");
@@ -154,6 +193,12 @@ async function loadDatabase() {
 
 // ==================== 6. ROUTAGE ====================
 function navigate(page) {
+    const allowed = getMatAllowedPages();
+    if (allowed.length && !allowed.includes(page)) {
+        showToast("Accès non autorisé pour votre rôle", "error");
+        page = MAT_ROLE_DEFAULT_PAGE[state.userProfile?.role] || 'dashboard';
+    }
+
     document.querySelectorAll('.page').forEach(p => { p.classList.add('hidden'); p.classList.remove('block'); });
     document.querySelectorAll('.nav-item').forEach(a => a.classList.remove('active'));
     const targetPage = document.getElementById('page-' + page);
@@ -169,7 +214,8 @@ function navigate(page) {
     if (page === 'ventes') renderVentes();
     if (page === 'locations') renderLocations();
     if (page === 'sav') renderSav();
-    // La page crm sera branchée à la prochaine étape.
+    if (page === 'crm') showCRMList();
+    if (page === 'comptes') renderComptes();
 }
 
 function toggleSidebar() {
@@ -183,6 +229,8 @@ function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // ==================== 7. CATALOGUE ====================
+let editingModelId = null;
+
 function renderCatalogue() {
     const query = (document.getElementById('search-catalogue')?.value || '').toLowerCase();
     const grid = document.getElementById('catalogue-grid');
@@ -207,7 +255,10 @@ function renderCatalogue() {
                     : `<svg class="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>`}
             </div>
             <div class="p-4">
-                <p class="text-xs font-bold text-medical-600 uppercase tracking-wide">${escapeHtml(m.category || 'Général')}</p>
+                <div class="flex justify-between items-start">
+                    <p class="text-xs font-bold text-medical-600 uppercase tracking-wide">${escapeHtml(m.category || 'Général')}</p>
+                    <button data-id="${m.id}" class="btn-edit-model text-xs text-gray-400 hover:text-medical-600 font-semibold cursor-pointer">Modifier</button>
+                </div>
                 <h4 class="font-display font-bold text-gray-900 mt-1">${escapeHtml(m.name)}</h4>
                 <p class="text-xs text-gray-500">${escapeHtml(m.brand || '—')}</p>
                 <div class="flex justify-between items-center mt-3 text-sm">
@@ -221,9 +272,50 @@ function renderCatalogue() {
             </div>
         </div>`;
     }).join('');
+
+    grid.querySelectorAll('.btn-edit-model').forEach(btn => btn.onclick = () => openEditModelModal(btn.dataset.id));
+    applyMatRoleRestrictions();
 }
 
-async function addEquipmentModel() {
+function resetModelForm() {
+    document.getElementById('nm-name').value = '';
+    document.getElementById('nm-brand').value = '';
+    document.getElementById('nm-category').value = '';
+    document.getElementById('nm-sale-price').value = '';
+    document.getElementById('nm-rental-price').value = '';
+    document.getElementById('nm-warranty').value = '12';
+    document.getElementById('nm-description').value = '';
+    document.getElementById('nm-photo').value = '';
+    document.getElementById('nm-current-photo-note').classList.add('hidden');
+}
+
+function openNewModelModal() {
+    editingModelId = null;
+    resetModelForm();
+    document.getElementById('model-modal-title').textContent = "Nouveau Modèle d'Équipement";
+    document.getElementById('btn-save-model').textContent = 'Sauvegarder';
+    openModal('modal-add-model');
+}
+
+function openEditModelModal(modelId) {
+    const m = state.equipmentModels.find(x => x.id === modelId);
+    if (!m) return;
+    editingModelId = modelId;
+    document.getElementById('nm-name').value = m.name || '';
+    document.getElementById('nm-brand').value = m.brand || '';
+    document.getElementById('nm-category').value = m.category || '';
+    document.getElementById('nm-sale-price').value = m.sale_price ?? '';
+    document.getElementById('nm-rental-price').value = m.rental_price_day ?? '';
+    document.getElementById('nm-warranty').value = m.warranty_months ?? 12;
+    document.getElementById('nm-description').value = m.description || '';
+    document.getElementById('nm-photo').value = '';
+    document.getElementById('nm-current-photo-note').classList.toggle('hidden', !m.photo_url);
+    document.getElementById('model-modal-title').textContent = 'Modifier le Modèle';
+    document.getElementById('btn-save-model').textContent = 'Mettre à jour';
+    openModal('modal-add-model');
+}
+
+async function saveEquipmentModel() {
     const name = document.getElementById('nm-name').value.trim();
     const brand = document.getElementById('nm-brand').value.trim();
     const category = document.getElementById('nm-category').value.trim() || 'Général';
@@ -239,7 +331,7 @@ async function addEquipmentModel() {
     btn.disabled = true; btn.textContent = 'Sauvegarde...';
 
     try {
-        let photoUrl = null;
+        let photoUrl = editingModelId ? (state.equipmentModels.find(m => m.id === editingModelId)?.photo_url || null) : null;
         if (photoFile) {
             const path = `models/${Date.now()}_${photoFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
             const { error: uploadErr } = await supabase.storage.from('mat-equipment-photos').upload(path, photoFile);
@@ -248,28 +340,26 @@ async function addEquipmentModel() {
             photoUrl = urlData.publicUrl;
         }
 
-        const { error } = await supabase.from('mat_equipment_models').insert([{
+        const payload = {
             name, brand, category, description,
             sale_price: salePrice, rental_price_day: rentalPrice,
             warranty_months: warrantyMonths, photo_url: photoUrl
-        }]);
+        };
+
+        const { error } = editingModelId
+            ? await supabase.from('mat_equipment_models').update(payload).eq('id', editingModelId)
+            : await supabase.from('mat_equipment_models').insert([payload]);
         if (error) throw error;
 
         closeModal('modal-add-model');
-        showToast("✅ Modèle créé");
-        document.getElementById('nm-name').value = '';
-        document.getElementById('nm-brand').value = '';
-        document.getElementById('nm-category').value = '';
-        document.getElementById('nm-sale-price').value = '';
-        document.getElementById('nm-rental-price').value = '';
-        document.getElementById('nm-warranty').value = '12';
-        document.getElementById('nm-description').value = '';
-        document.getElementById('nm-photo').value = '';
+        showToast(editingModelId ? "✅ Modèle mis à jour" : "✅ Modèle créé");
+        editingModelId = null;
+        resetModelForm();
         await loadDatabase();
     } catch (err) {
-        showToast("Erreur création modèle: " + (err.message || ''), "error");
+        showToast("Erreur: " + (err.message || ''), "error");
     } finally {
-        btn.disabled = false; btn.textContent = 'Sauvegarder';
+        btn.disabled = false; btn.textContent = editingModelId ? 'Mettre à jour' : 'Sauvegarder';
     }
 }
 
@@ -331,6 +421,7 @@ function openReceiveModal() {
     document.getElementById('ru-purchase-price').value = '';
     document.getElementById('ru-purchase-date').value = new Date().toISOString().split('T')[0];
     openModal('modal-receive-unit');
+    document.getElementById('ru-serial').focus();
 }
 
 async function receiveEquipmentUnit() {
@@ -358,10 +449,14 @@ async function receiveEquipmentUnit() {
 
     if (error) return showToast("Erreur: " + (error.message.includes('unique') ? "Ce numéro de série existe déjà" : error.message), "error");
 
-    closeModal('modal-receive-unit');
     showToast("✅ Équipement réceptionné");
     await loadDatabase();
     renderParc();
+
+    // La fenêtre reste ouverte : on vide juste le n° de série pour enchaîner
+    // rapidement sur l'unité suivante du même modèle (clique "Terminé" pour fermer).
+    document.getElementById('ru-serial').value = '';
+    document.getElementById('ru-serial').focus();
 }
 
 let transferUnitId = null;
@@ -535,7 +630,6 @@ async function addMatClient() {
     document.getElementById('nc-email').value = '';
     document.getElementById('nc-address').value = '';
     await loadDatabase();
-    renderVentes();
 }
 
 function printEquipmentInvoice(saleId, items, total, mode, clientId) {
@@ -819,7 +913,158 @@ async function executeCloseTicket() {
     renderSav();
 }
 
-// ==================== 12. DASHBOARD ====================
+// ==================== 12. CLIENTS (CRM) ====================
+function renderCRM() {
+    const body = document.getElementById('crm-body');
+    if (!body) return;
+
+    if (!state.clients.length) {
+        body.innerHTML = `<tr><td colspan="5" class="px-6 py-8 text-center text-gray-400">Aucun client enregistré</td></tr>`;
+        return;
+    }
+
+    body.innerHTML = state.clients.map(c => {
+        const debt = Number(c.debt) || 0;
+        return `<tr class="hover:bg-gray-50/50">
+            <td class="px-6 py-4 font-bold text-gray-900">${escapeHtml(c.company_name || c.name)}</td>
+            <td class="px-6 py-4 text-xs">${c.client_type === 'clinique' ? '🏥 Clinique' : '👤 Particulier'}</td>
+            <td class="px-6 py-4 text-gray-500">${escapeHtml(c.phone) || '—'}</td>
+            <td class="px-6 py-4"><span class="px-2.5 py-0.5 rounded text-xs font-bold ${debt > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${debt > 0 ? fmtMoney(debt) : 'Soldé'}</span></td>
+            <td class="px-6 py-4 text-right">
+                <button data-id="${c.id}" class="btn-detail-client text-slate-600 border border-gray-200 px-2.5 py-1 rounded-lg cursor-pointer text-xs font-semibold mr-2 hover:bg-gray-50">Dossier</button>
+                ${debt > 0 ? `<button data-id="${c.id}" data-debt="${debt}" class="btn-pay-debt bg-green-600 text-white px-2.5 py-1 rounded-lg cursor-pointer text-xs font-bold hover:bg-green-700">Recouvrer</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
+
+    body.querySelectorAll('.btn-detail-client').forEach(btn => btn.onclick = () => showClientDetail(btn.dataset.id));
+    body.querySelectorAll('.btn-pay-debt').forEach(btn => btn.onclick = () => payMatClientDebt(btn.dataset.id, Number(btn.dataset.debt)));
+}
+
+function showClientDetail(clientId) {
+    const client = state.clients.find(c => c.id === clientId);
+    if (!client) return;
+
+    document.getElementById('crm-list-view').style.display = 'none';
+    document.getElementById('crm-detail-view').style.display = 'block';
+    document.getElementById('detail-client-name').textContent = client.company_name || client.name;
+
+    const clientSales = state.sales.filter(s => s.client_id === clientId);
+    const clientRentals = state.rentals.filter(r => r.client_id === clientId);
+    const clientTickets = state.maintenanceTickets.filter(t => t.client_id === clientId);
+    const cumulativeSpent = clientSales.reduce((a, b) => a + Number(b.total), 0);
+    const balance = Number(client.debt) || 0;
+    const activeRentals = clientRentals.filter(r => r.status === 'en_cours' || r.status === 'en_retard').length;
+
+    document.getElementById('detail-total').textContent = fmtMoney(cumulativeSpent);
+    document.getElementById('detail-nb').textContent = clientSales.length;
+    document.getElementById('detail-locations-actives').textContent = activeRentals;
+    document.getElementById('detail-solde').textContent = fmtMoney(balance);
+    document.getElementById('detail-solde').className = `font-display text-2xl font-bold mt-1 ${balance > 0 ? 'text-red-600' : 'text-green-600'}`;
+
+    const invoicesBody = document.getElementById('detail-invoices');
+    invoicesBody.innerHTML = clientSales.length ? clientSales.map(s => `
+        <tr><td class="px-6 py-2.5 font-bold">${escapeHtml(s.id)}</td><td class="px-6 py-2.5 text-xs">${fmtDate(s.created_at)}</td><td class="px-6 py-2.5 font-bold">${fmtMoney(s.total)}</td>
+        <td class="px-6 py-2.5"><span class="px-2 py-0.5 rounded text-xs font-bold ${s.status === 'paye' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}">${s.status === 'paye' ? 'Payé' : 'Crédit'}</span></td></tr>
+    `).join('') : `<tr><td colspan="4" class="px-6 py-4 text-center text-gray-400 text-xs">Aucune facture</td></tr>`;
+
+    const rentalsBody = document.getElementById('detail-rentals');
+    rentalsBody.innerHTML = clientRentals.length ? clientRentals.map(r => {
+        const unit = state.equipmentUnits.find(u => u.id === r.equipment_unit_id);
+        const model = state.equipmentModels.find(m => m.id === unit?.model_id);
+        return `<tr><td class="px-6 py-2.5 font-bold">${escapeHtml(model?.name || '')}</td><td class="px-6 py-2.5 text-xs">${fmtDate(r.start_date)}</td><td class="px-6 py-2.5 text-xs">${fmtDate(r.expected_end_date)}</td>
+        <td class="px-6 py-2.5"><span class="px-2 py-0.5 rounded text-xs font-bold ${rentalStatusClasses[r.status] || 'bg-gray-100'}">${rentalStatusLabels[r.status] || r.status}</span></td></tr>`;
+    }).join('') : `<tr><td colspan="4" class="px-6 py-4 text-center text-gray-400 text-xs">Aucune location</td></tr>`;
+
+    const ticketsBody = document.getElementById('detail-tickets');
+    ticketsBody.innerHTML = clientTickets.length ? clientTickets.map(t => {
+        const unit = state.equipmentUnits.find(u => u.id === t.equipment_unit_id);
+        const model = state.equipmentModels.find(m => m.id === unit?.model_id);
+        return `<tr><td class="px-6 py-2.5 font-bold">${escapeHtml(model?.name || '')}</td><td class="px-6 py-2.5 text-xs max-w-xs truncate">${escapeHtml(t.issue_description)}</td>
+        <td class="px-6 py-2.5"><span class="px-2 py-0.5 rounded text-xs font-bold ${ticketStatusClasses[t.status] || 'bg-gray-100'}">${ticketStatusLabels[t.status] || t.status}</span></td></tr>`;
+    }).join('') : `<tr><td colspan="3" class="px-6 py-4 text-center text-gray-400 text-xs">Aucun ticket SAV</td></tr>`;
+}
+
+function showCRMList() {
+    document.getElementById('crm-list-view').style.display = 'block';
+    document.getElementById('crm-detail-view').style.display = 'none';
+    renderCRM();
+}
+
+async function payMatClientDebt(clientId, amount) {
+    const client = state.clients.find(c => c.id === clientId);
+    if (!client || !confirm(`Confirmer l'encaissement de ${fmtMoney(amount)} pour solder le compte de ${client.company_name || client.name} ?`)) return;
+
+    const { error: e1 } = await supabase.from('mat_clients').update({ debt: 0 }).eq('id', clientId);
+    const { error: e2 } = await supabase.from('mat_sales').update({ status: 'paye' }).eq('client_id', clientId).eq('status', 'credit');
+    if (e1 || e2) return showToast("Erreur lors du recouvrement: " + (e1 || e2).message, "error");
+
+    showToast("✅ Compte client régularisé");
+    await loadDatabase();
+}
+
+// ==================== 13. COMPTES (Admin) ====================
+function renderComptes() {
+    const body = document.getElementById('comptes-body');
+    if (!body) return;
+
+    if (state.userProfile?.role !== 'admin') {
+        body.innerHTML = `<tr><td colspan="3" class="px-6 py-8 text-center text-gray-400">Accès réservé à l'Admin</td></tr>`;
+        return;
+    }
+
+    body.innerHTML = state.profiles.map(p => `
+        <tr class="hover:bg-gray-50/50">
+            <td class="px-6 py-4 font-bold text-gray-900">${escapeHtml(p.full_name || '(sans nom)')}${p.id === state.currentUser.id ? ' <span class="text-xs text-gray-400">(vous)</span>' : ''}</td>
+            <td class="px-6 py-4">
+                <select data-id="${p.id}" class="mat-role-select border rounded-lg px-2 py-1 text-sm bg-white outline-none">
+                    ${Object.keys(MAT_ROLE_LABELS).map(r => `<option value="${r}" ${p.role === r ? 'selected' : ''}>${MAT_ROLE_LABELS[r]}</option>`).join('')}
+                </select>
+            </td>
+            <td class="px-6 py-4 text-right">
+                <button data-id="${p.id}" class="btn-save-mat-role bg-medical-600 text-white px-3 py-1.5 rounded-lg cursor-pointer text-xs font-bold hover:bg-medical-700">Enregistrer</button>
+            </td>
+        </tr>
+    `).join('');
+
+    body.querySelectorAll('.btn-save-mat-role').forEach(btn => {
+        btn.onclick = () => {
+            const select = body.querySelector(`.mat-role-select[data-id="${btn.dataset.id}"]`);
+            updateMatAccountRole(btn.dataset.id, select.value);
+        };
+    });
+}
+
+async function updateMatAccountRole(profileId, newRole) {
+    if (profileId === state.currentUser.id && newRole !== 'admin') {
+        if (!confirm("Vous êtes sur le point de retirer votre propre accès Admin. Continuer ?")) return;
+    }
+    const { error } = await supabase.from('mat_profiles').update({ role: newRole }).eq('id', profileId);
+    if (error) return showToast("Erreur: " + error.message, "error");
+    showToast("✅ Rôle mis à jour");
+    await loadDatabase();
+    renderComptes();
+}
+
+async function createMatAccountProfile() {
+    const uuid = document.getElementById('na-uuid').value.trim();
+    const fullName = document.getElementById('na-name').value.trim();
+    const role = document.getElementById('na-role').value;
+
+    if (!uuid || !fullName) return showToast("UUID et nom obligatoires", "error");
+
+    const { error } = await supabase.from('mat_profiles').insert([{ id: uuid, full_name: fullName, role }]);
+    if (error) return showToast("Erreur: " + error.message, "error");
+
+    closeModal('modal-add-account');
+    showToast("✅ Compte créé");
+    document.getElementById('na-uuid').value = '';
+    document.getElementById('na-name').value = '';
+    await loadDatabase();
+    renderComptes();
+}
+
+// ==================== 14. DASHBOARD ====================
 function renderDashboard() {
     const todayStr = new Date().toDateString();
     const todaySales = state.sales.filter(s => new Date(s.created_at).toDateString() === todayStr);
@@ -835,7 +1080,6 @@ function renderDashboard() {
     document.getElementById('stat-retard').textContent = enRetard;
     document.getElementById('stat-sav').textContent = savOuverts;
 
-    // Répartition du parc par statut
     const statusLabels = {
         en_stock: 'En stock', loue: 'En location', vendu: 'Vendu',
         en_maintenance: 'En maintenance', hors_service: 'Hors service', reserve: 'Réservé'
@@ -864,7 +1108,6 @@ function renderDashboard() {
         `).join('') : `<p class="text-xs text-gray-400 font-medium">Aucun équipement enregistré</p>`;
     }
 
-    // Dernières ventes
     const tableBody = document.getElementById('recent-sales-body');
     const sortedSales = [...state.sales].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
     tableBody.innerHTML = sortedSales.length ? sortedSales.map(s => {
@@ -878,14 +1121,16 @@ function renderDashboard() {
     }).join('') : `<tr><td colspan="4" class="px-6 py-6 text-center text-gray-400">Aucune vente enregistrée</td></tr>`;
 }
 
-// ==================== 13. EXPOSITION GLOBALE (SCOPE MODULE) ====================
+// ==================== 15. EXPOSITION GLOBALE (SCOPE MODULE) ====================
 window.navigate = navigate;
 window.toggleSidebar = toggleSidebar;
 window.handleLogout = handleLogout;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.renderCatalogue = renderCatalogue;
-window.addEquipmentModel = addEquipmentModel;
+window.openNewModelModal = openNewModelModal;
+window.openEditModelModal = openEditModelModal;
+window.saveEquipmentModel = saveEquipmentModel;
 window.renderParc = renderParc;
 window.openReceiveModal = openReceiveModal;
 window.receiveEquipmentUnit = receiveEquipmentUnit;
@@ -908,8 +1153,15 @@ window.openTicketModal = openTicketModal;
 window.openMaintenanceTicket = openMaintenanceTicket;
 window.openCloseTicketModal = openCloseTicketModal;
 window.executeCloseTicket = executeCloseTicket;
+window.renderCRM = renderCRM;
+window.showClientDetail = showClientDetail;
+window.showCRMList = showCRMList;
+window.payMatClientDebt = payMatClientDebt;
+window.renderComptes = renderComptes;
+window.updateMatAccountRole = updateMatAccountRole;
+window.createMatAccountProfile = createMatAccountProfile;
 
-// ==================== 14. INITIATIONS ET LISTENERS ====================
+// ==================== 16. INITIATIONS ET LISTENERS ====================
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
 
